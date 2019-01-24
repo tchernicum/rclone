@@ -17,8 +17,6 @@ ifneq ($(TAG),$(LAST_TAG))
 endif
 GO_VERSION := $(shell go version)
 GO_FILES := $(shell go list ./... | grep -v /vendor/ )
-# Run full tests if go >= go1.11
-FULL_TESTS := $(shell go version | perl -lne 'print "go$$1.$$2" if /go(\d+)\.(\d+)/ && ($$1 > 1 || $$2 >= 11)')
 BETA_PATH := $(BRANCH_PATH)$(TAG)
 BETA_URL := https://beta.rclone.org/$(BETA_PATH)/
 BETA_UPLOAD_ROOT := memstore:beta-rclone-org
@@ -42,7 +40,6 @@ vars:
 	@echo LAST_TAG="'$(LAST_TAG)'"
 	@echo NEW_TAG="'$(NEW_TAG)'"
 	@echo GO_VERSION="'$(GO_VERSION)'"
-	@echo FULL_TESTS="'$(FULL_TESTS)'"
 	@echo BETA_URL="'$(BETA_URL)'"
 
 version:
@@ -57,20 +54,16 @@ test:	rclone
 # Quick test
 quicktest:
 	RCLONE_CONFIG="/notfound" go test $(BUILDTAGS) $(GO_FILES)
-ifdef FULL_TESTS
+
+racequicktest:
 	RCLONE_CONFIG="/notfound" go test $(BUILDTAGS) -cpu=2 -race $(GO_FILES)
-endif
 
 # Do source code quality checks
 check:	rclone
-ifdef FULL_TESTS
 	go vet $(BUILDTAGS) -printfuncs Debugf,Infof,Logf,Errorf ./...
 	errcheck $(BUILDTAGS) ./...
 	find . -name \*.go | grep -v /vendor/ | xargs goimports -d | grep . ; test $$? -eq 1
 	go list ./... | xargs -n1 golint | grep -E -v '(StorageUrl|CdnUrl)' ; test $$? -eq 1
-else
-	@echo Skipping source quality tests as version of go too old
-endif
 
 gometalinter_install:
 	go get -u github.com/alecthomas/gometalinter
@@ -84,11 +77,9 @@ gometalinter:
 
 # Get the build dependencies
 build_dep:
-ifdef FULL_TESTS
 	go get -u github.com/kisielk/errcheck
 	go get -u golang.org/x/tools/cmd/goimports
 	go get -u golang.org/x/lint/golint
-endif
 
 # Get the release dependencies
 release_dep:
@@ -172,11 +163,7 @@ log_since_last_release:
 	git log $(LAST_TAG)..
 
 compile_all:
-ifdef FULL_TESTS
 	go run bin/cross-compile.go -parallel 8 -compile-only $(BUILDTAGS) $(TAG)
-else
-	@echo Skipping compile all as version of go too old
-endif
 
 appveyor_upload:
 	rclone --config bin/travis.rclone.conf -v copy --exclude '*beta-latest*' build/ $(BETA_UPLOAD)
@@ -195,6 +182,11 @@ endif
 BUILD_FLAGS := -exclude "^(windows|darwin)/"
 ifeq ($(TRAVIS_OS_NAME),osx)
 	BUILD_FLAGS := -include "^darwin/" -cgo
+endif
+ifeq ($(TRAVIS_OS_NAME),windows)
+# BUILD_FLAGS := -include "^windows/" -cgo
+# 386 doesn't build yet
+	BUILD_FLAGS := -include "^windows/amd64" -cgo
 endif
 
 travis_beta:
